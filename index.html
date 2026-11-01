@@ -67,6 +67,7 @@
   .badge.short { background: #059669; }
   .badge.analysis { background: #7c3aed; }
   .badge.calc { background: #ea580c; }
+  .badge.upload { background: #db2777; }
   .q-score { margin-left: auto; color: var(--muted); font-size: 13px; white-space: nowrap; }
 
   .cat-head { font-weight: 700; font-size: 16px; margin: 20px 0 12px; padding-bottom: 8px; border-bottom: 2px solid var(--primary); display: flex; align-items: center; gap: 10px; }
@@ -81,6 +82,18 @@
   textarea.answer { min-height: 90px; resize: vertical; }
   textarea.answer.analysis { min-height: 150px; }
   input.answer { font-size: 16px; }
+
+  /* 上传题 */
+  .upload-box { border: 1.5px dashed var(--border); border-radius: 10px; padding: 14px; background: #fafbff; }
+  .upload-box:hover { border-color: var(--primary); }
+  input.upload-input { font-size: 14px; padding: 8px; }
+  .upload-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .upload-item { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  .upload-item .u-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .upload-item .u-size { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .upload-item .u-rm { color: var(--error); cursor: pointer; font-size: 12px; border: 1px solid #fecaca; border-radius: 6px; padding: 1px 8px; background: #fff; }
+  .file-link { display: inline-block; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; color: var(--primary); text-decoration: none; font-size: 13px; }
+  .file-link:hover { text-decoration: underline; }
 
   .btn { display: inline-flex; align-items: center; gap: 6px; border: none; cursor: pointer; background: var(--primary); color: #fff; padding: 11px 22px; border-radius: 10px; font-size: 15px; font-weight: 600; transition: background .15s ease; }
   .btn:hover { background: var(--primary-dark); }
@@ -102,6 +115,7 @@
   .result-item.right { background: var(--success-bg); border-color: #bbf7d0; }
   .result-item.wrong { background: var(--error-bg); border-color: #fecaca; }
   .result-item.partial { background: #fffbeb; border-color: #fde68a; }
+  .result-item.pending { background: #f8fafc; border-color: #cbd5e1; }
   .ri-head { display: flex; gap: 8px; align-items: center; font-weight: 600; }
   .ri-score { margin-left: auto; font-weight: 700; }
   .ri-q { font-size: 14px; color: var(--text); margin-top: 4px; }
@@ -277,6 +291,7 @@
             <option value="short">简答题</option>
             <option value="calc">计算题</option>
             <option value="analysis">分析题</option>
+            <option value="upload">上传题</option>
           </select>
         </div>
         <div class="form-field"><label>题目内容</label>
@@ -316,7 +331,8 @@
         </div>
         <div class="hint">
           全部数据 = 老师密码 + 所有套题。导出后可作为备份；导入会覆盖当前所有数据。<br>
-          题目分类会自动按「一、单选 二、多选 三、简答 四、计算 五、分析」排序展示，无需手动排序。
+          题目分类会自动按「一、单选 二、多选 三、简答 四、计算 五、分析 六、上传」排序展示，无需手动排序。<br>
+          「上传题」用于学生提交作业文件（图片 / Word / PDF 等），提交后老师可在「成绩汇总」中点击「📎下载」批改。
         </div>
       </div>
     </section>
@@ -408,9 +424,15 @@
     multi:    { label: '多选题' },
     short:    { label: '简答题' },
     calc:     { label: '计算题' },
-    analysis: { label: '分析题' }
+    analysis: { label: '分析题' },
+    upload:   { label: '上传题' }
   };
-  var CATEGORY_ORDER = ['single', 'multi', 'short', 'calc', 'analysis'];
+  var CATEGORY_ORDER = ['single', 'multi', 'short', 'calc', 'analysis', 'upload'];
+
+  // ===== 文件上传配置 =====
+  var STORAGE_BUCKET = 'homework';           // Supabase 存储桶名，需执行 storage-setup.sql 创建
+  var UPLOAD_ACCEPT = '.jpg,.jpeg,.png,.gif,.webp,.bmp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar,.7z';
+  var MAX_FILE_MB = 20;                      // 单个文件上限（MB）
   var CN_NUM = ['一', '二', '三', '四', '五', '六', '七', '八'];
 
   function uid() { return 'set_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
@@ -585,6 +607,7 @@
   }
 
   function fullScore(q) {
+    if (q.type === 'upload') return 0; // 上传题由老师线下批改，不计入自动判分
     if (q.type === 'calc') {
       var a = (q.answerScore !== undefined) ? Number(q.answerScore) : (Number(q.score) || 0);
       var s = (q.stepsScore !== undefined) ? Number(q.stepsScore) : 0;
@@ -671,6 +694,14 @@
         detail: ansDetail + stepDetail, yourAnswer: obj.answer || '未作答', yourProcess: obj.process || '' };
     }
 
+    if (q.type === 'upload') {
+      var files = (ans && Array.isArray(ans.files)) ? ans.files : [];
+      var names = files.map(function (f) { return f.name; }).join('、');
+      return { score: 0, full: 0, ok: false, status: 'pending',
+        detail: files.length ? ('已上传 ' + files.length + ' 个文件，待老师批改') : '未上传文件',
+        yourAnswer: files.length ? names : '未上传', files: files };
+    }
+
     return { score: 0, full: full, ok: false, status: 'wrong', detail: '未知题型', yourAnswer: String(ans) };
   }
 
@@ -686,7 +717,7 @@
     var per = [], total = 0, fullTotal = 0;
     order.forEach(function (entry, i) {
       var r = gradeQuestion(entry.q, answers[i]);
-      per.push({ type: entry.q.type, score: r.score, full: r.full, status: r.status, detail: r.detail, yourAnswer: r.yourAnswer, yourProcess: r.yourProcess, explanation: entry.q.explanation, question: entry.q.question });
+      per.push({ type: entry.q.type, score: r.score, full: r.full, status: r.status, detail: r.detail, yourAnswer: r.yourAnswer, yourProcess: r.yourProcess, files: r.files, explanation: entry.q.explanation, question: entry.q.question });
       total += r.score; fullTotal += r.full;
     });
     total = Math.round(total * 10) / 10;
@@ -851,7 +882,7 @@
       html += '<div class="q-head"><span class="q-num">' + num + '.</span>' +
         '<span class="badge ' + q.type + '">' + TYPE_META[q.type].label + '</span>' +
         '<span class="q-text">' + escapeHtml(q.question) + '</span>' +
-        '<span class="q-score">' + fullScore(q) + ' 分</span></div>';
+        '<span class="q-score">' + (q.type === 'upload' ? '待批改' : (fullScore(q) + ' 分')) + '</span></div>';
 
       if (q.type === 'single') {
         html += '<div class="options">' + q.options.map(function (opt, j) {
@@ -868,11 +899,19 @@
           '<textarea class="answer process" data-q="' + entry.idx + '" placeholder="请写出计算过程…"></textarea></div>' +
           '<div class="form-field"><label>最终答案（占 ' + (q.answerScore !== undefined ? q.answerScore : q.score) + ' 分）</label>' +
           '<input class="answer" data-q="' + entry.idx + '" data-part="answer" placeholder="请输入数值（如 28.26，也可输入 3.14*9）"></div>';
+      } else if (q.type === 'upload') {
+        html += '<div class="upload-box">' +
+          '<input type="file" class="upload-input" data-q="' + entry.idx + '" multiple accept="' + UPLOAD_ACCEPT + '">' +
+          '<div class="mini-hint">可上传图片 / Word / PDF 等，最多 ' + (Math.max(1, Number(q.maxFiles) || 1)) + ' 个文件，单个不超过 ' + MAX_FILE_MB + 'MB。提交后老师可下载批改。</div>' +
+          '<div class="upload-list" data-q="' + entry.idx + '"></div></div>';
       }
       html += '</div>';
       num++;
     });
     el.innerHTML = html;
+    el.querySelectorAll('input.upload-input').forEach(function (input) {
+      input.addEventListener('change', function () { renderUploadList(input); });
+    });
     document.getElementById('exam-result').innerHTML = '';
   }
 
@@ -892,11 +931,89 @@
         var p = box.querySelector('.process');
         var a = box.querySelector('input.answer');
         answers.push({ process: p ? p.value : '', answer: a ? a.value : '' });
+      } else if (q.type === 'upload') {
+        var fi = box.querySelector('input.upload-input');
+        answers.push({ files: fi && fi.files ? Array.prototype.slice.call(fi.files) : [] });
       } else {
         var ta = box.querySelector('.answer');
         answers.push(ta ? ta.value : '');
       }
     });
+    return answers;
+  }
+
+  /* ============ 文件上传 ============ */
+  function extOf(name) {
+    var m = /\.([A-Za-z0-9]{1,10})$/.exec(name || '');
+    return m ? m[1].toLowerCase() : 'bin';
+  }
+  function fmtSize(bytes) {
+    bytes = Number(bytes) || 0;
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return Math.round(bytes / 1024 * 10) / 10 + ' KB';
+    return Math.round(bytes / 1024 / 1024 * 10) / 10 + ' MB';
+  }
+  function buildStoragePath(setId, sid, filename) {
+    var safe = function (s, fb) { var t = String(s || ''); return /^[A-Za-z0-9_-]+$/.test(t) ? t : fb; };
+    var rand = Math.random().toString(36).slice(2, 8);
+    return 'uploads/' + safe(setId, 'set') + '/' + safe(sid, 'anon') + '/' + Date.now() + '-' + rand + '.' + extOf(filename);
+  }
+  function removeFileFromInput(input, idx) {
+    try {
+      var dt = new DataTransfer();
+      Array.prototype.forEach.call(input.files, function (f, i) { if (i !== idx) dt.items.add(f); });
+      input.files = dt.files;
+    } catch (e) {}
+  }
+  function renderUploadList(input) {
+    var box = input.closest('.upload-box');
+    if (!box) return;
+    var list = box.querySelector('.upload-list');
+    var qIdx = input.getAttribute('data-q');
+    var match = orderedQuestions(getActiveSet()).filter(function (e) { return String(e.idx) === String(qIdx); })[0];
+    var maxFiles = match ? (Math.max(1, Number(match.q.maxFiles) || 1)) : 1;
+    var files = Array.prototype.slice.call(input.files || []);
+    if (files.length > maxFiles) {
+      alert('最多上传 ' + maxFiles + ' 个文件');
+      input.value = '';
+      files = [];
+    }
+    list.innerHTML = files.map(function (f, i) {
+      return '<div class="upload-item"><span class="u-name">📎 ' + escapeHtml(f.name) + '</span>' +
+        '<span class="u-size">' + fmtSize(f.size) + '</span>' +
+        '<button type="button" class="u-rm" data-i="' + i + '">移除</button></div>';
+    }).join('');
+    list.querySelectorAll('.u-rm').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        removeFileFromInput(input, Number(btn.getAttribute('data-i')));
+        renderUploadList(input);
+      });
+    });
+  }
+  async function uploadAnswerFiles(setId, sid, order, answers) {
+    var hasUpload = order.some(function (e) { return e.q.type === 'upload'; });
+    if (!hasUpload) return answers;
+    var c = getSb();
+    if (!c) { throw new Error('当前为本地版，不支持文件上传（需联网版 + Supabase）'); }
+    for (var i = 0; i < order.length; i++) {
+      var q = order[i].q;
+      if (q.type !== 'upload') continue;
+      var ans = answers[i] || {};
+      var files = Array.isArray(ans.files) ? ans.files : [];
+      var maxFiles = Math.max(1, Number(q.maxFiles) || 1);
+      if (files.length > maxFiles) { throw new Error('「' + q.question + '」最多上传 ' + maxFiles + ' 个文件'); }
+      var meta = [];
+      for (var j = 0; j < files.length; j++) {
+        var f = files[j];
+        if (f.size > MAX_FILE_MB * 1024 * 1024) { throw new Error('文件「' + f.name + '」超过 ' + MAX_FILE_MB + 'MB 限制'); }
+        var path = buildStoragePath(setId, sid, f.name);
+        var up = await c.storage.from(STORAGE_BUCKET).upload(path, f, { cacheControl: '3600' });
+        if (up.error) { throw up.error; }
+        var pub = c.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+        meta.push({ name: f.name, url: (pub && pub.data) ? pub.data.publicUrl : '', size: f.size, type: f.type || '', ext: extOf(f.name) });
+      }
+      answers[i] = { files: meta };
+    }
     return answers;
   }
 
@@ -908,15 +1025,25 @@
     if (!set) { alert('暂无套题'); return; }
     var order = orderedQuestions(set);
     var answers = collectAnswers(set);
-    var result = gradeAll(order, answers);
 
-    var sub = { name: name, sid: sid, score: result.total, total: result.fullTotal,
-      perQuestion: result.per.map(function (p) { return { score: p.score, full: p.full, status: p.status }; }),
-      time: new Date().toISOString() };
-    await addSubmission(set.id, sub);
+    var btn = document.getElementById('btn-submit');
+    var oldText = btn.textContent;
+    btn.disabled = true; btn.textContent = '提交中…';
+    try {
+      answers = await uploadAnswerFiles(set.id, sid, order, answers);
+      var result = gradeAll(order, answers);
+      var sub = { name: name, sid: sid, score: result.total, total: result.fullTotal,
+        perQuestion: result.per.map(function (p) { return { score: p.score, full: p.full, status: p.status, type: p.type, files: p.files }; }),
+        time: new Date().toISOString() };
+      await addSubmission(set.id, sub);
 
-    renderResult(result, name, set.name);
-    document.getElementById('exam-result').scrollIntoView({ behavior: 'smooth' });
+      renderResult(result, name, set.name);
+      document.getElementById('exam-result').scrollIntoView({ behavior: 'smooth' });
+    } catch (err) {
+      alert('提交失败：' + (err && err.message ? err.message : err) + '\n\n若为文件上传失败，请确认已在 Supabase 中执行 storage-setup.sql 创建存储桶，且单个文件不超过 ' + MAX_FILE_MB + 'MB。');
+    } finally {
+      btn.disabled = false; btn.textContent = oldText;
+    }
   }
 
   function renderResult(result, name, setName) {
@@ -924,12 +1051,18 @@
     var pct = result.fullTotal > 0 ? result.total / result.fullTotal : 0;
     var cls = pct >= 0.85 ? 'ok' : (pct >= 0.6 ? 'mid' : 'low');
     var html = '<div class="card score-hero">' +
-      '<div class="sub">' + escapeHtml(name) + ' · ' + escapeHtml(setName) + '</div>' +
-      '<div class="big ' + cls + '">' + result.total + ' <span style="font-size:20px;color:var(--muted)">/ ' + result.fullTotal + '</span></div>' +
-      '<div class="sub">正确率 ' + Math.round(pct * 100) + '%</div></div>';
+      '<div class="sub">' + escapeHtml(name) + ' · ' + escapeHtml(setName) + '</div>';
+    if (result.fullTotal > 0) {
+      html += '<div class="big ' + cls + '">' + result.total + ' <span style="font-size:20px;color:var(--muted)">/ ' + result.fullTotal + '</span></div>' +
+        '<div class="sub">正确率 ' + Math.round(pct * 100) + '%</div>';
+    } else {
+      html += '<div class="big" style="font-size:26px">📤 已提交</div>' +
+        '<div class="sub">文件已上传，待老师批改</div>';
+    }
+    html += '</div>';
 
     result.per.forEach(function (p, i) {
-      var icon = p.status === 'right' ? '<span class="icon-ok">✔</span>' : (p.status === 'partial' ? '<span class="icon-half">◐</span>' : '<span class="icon-no">✘</span>');
+      var icon = p.status === 'right' ? '<span class="icon-ok">✔</span>' : (p.status === 'partial' ? '<span class="icon-half">◐</span>' : (p.status === 'pending' ? '<span class="icon-half">📎</span>' : '<span class="icon-no">✘</span>'));
       html += '<div class="result-item ' + p.status + '">' +
         '<div class="ri-head">' + icon + ' ' + (i + 1) + '. <span class="badge ' + p.type + '">' + TYPE_META[p.type].label + '</span>' +
         '<span class="ri-score">' + p.score + ' / ' + p.full + ' 分</span></div>' +
@@ -957,7 +1090,8 @@
     if (!set) { statsEl.innerHTML = ''; tableEl.innerHTML = '<div class="empty">暂无套题。</div>'; return; }
 
     var subs = await listSubs(set.id);
-    var qCount = orderedQuestions(set).length;
+    var order = orderedQuestions(set);
+    var qCount = order.length;
 
     if (subs.length === 0) {
       statsEl.innerHTML = '';
@@ -979,7 +1113,17 @@
 
     var body = subs.map(function (s, idx) {
       var cells = '<td>' + (idx + 1) + '</td><td>' + escapeHtml(s.name) + '</td><td>' + escapeHtml(s.sid || '') + '</td><td><b>' + s.score + '</b> / ' + s.total + '</td>';
-      for (var j = 0; j < qCount; j++) { var p = s.perQuestion && s.perQuestion[j]; cells += '<td>' + (p ? (p.score + '/' + p.full) : '') + '</td>'; }
+      for (var j = 0; j < qCount; j++) {
+        var p = s.perQuestion && s.perQuestion[j];
+        if (order[j].q.type === 'upload') {
+          var fl = (p && p.files) ? p.files : [];
+          cells += '<td>' + (fl.length
+            ? fl.map(function (f) { return '<a class="file-link" href="' + escapeAttr(f.url) + '" target="_blank" rel="noopener" title="' + escapeAttr(f.name) + '">📎下载</a>'; }).join('<br>')
+            : '<span style="color:var(--muted)">未传</span>') + '</td>';
+        } else {
+          cells += '<td>' + (p ? (p.score + '/' + p.full) : '') + '</td>';
+        }
+      }
       cells += '<td>' + fmtTime(s.time) + '</td><td class="del" data-id="' + s.id + '" title="删除">✕</td>';
       return '<tr>' + cells + '</tr>';
     }).join('');
@@ -1007,7 +1151,8 @@
     if (!set) { alert('暂无套题'); return; }
     var subs = await listSubs(set.id);
     if (subs.length === 0) { alert('本套暂无成绩可导出'); return; }
-    var qCount = orderedQuestions(set).length;
+    var order = orderedQuestions(set);
+    var qCount = order.length;
     var lines = [];
     var head = ['序号', '姓名', '学号', '总分', '满分'];
     for (var i = 1; i <= qCount; i++) head.push('第' + i + '题');
@@ -1016,7 +1161,15 @@
 
     subs.forEach(function (s, idx) {
       var row = [idx + 1, csvCell(s.name), csvCell(s.sid || ''), s.score, s.total];
-      for (var j = 0; j < qCount; j++) { var p = s.perQuestion && s.perQuestion[j]; row.push(p ? p.score : ''); }
+      for (var j = 0; j < qCount; j++) {
+        var p = s.perQuestion && s.perQuestion[j];
+        if (order[j].q.type === 'upload') {
+          var fl = (p && p.files) ? p.files : [];
+          row.push(fl.length ? fl.map(function (f) { return f.name + ' ' + f.url; }).join('；') : '未上传');
+        } else {
+          row.push(p ? p.score : '');
+        }
+      }
       row.push(fmtTime(s.time));
       lines.push(row.join(','));
     });
@@ -1109,6 +1262,16 @@
       steps.forEach(function (g) { addKeywordRow(stepContainer, Array.isArray(g) ? g.join(',') : g); });
       el.querySelector('[data-act="add-step"]').addEventListener('click', function () { addKeywordRow(stepContainer, ''); });
     }
+
+    else if (type === 'upload') {
+      var uq = q || {};
+      var div = document.createElement('div');
+      div.innerHTML =
+        '<div class="form-field"><label>最多上传文件数</label>' +
+        '<input type="number" id="f-maxfiles" min="1" max="20" value="' + escapeAttr(uq.maxFiles !== undefined ? uq.maxFiles : 1) + '"></div>' +
+        '<div class="mini-hint">支持图片、Word、PDF、Excel、PPT、压缩包等；单个文件不超过 ' + MAX_FILE_MB + 'MB。文件上传后，老师可在「成绩汇总」中下载批改。</div>';
+      el.appendChild(div);
+    }
   }
 
   function readKeywordGroups(sel) {
@@ -1146,6 +1309,8 @@
       if (aS !== '') q.answerScore = Number(aS);
       if (sS !== '') q.stepsScore = Number(sS);
       q.steps = readKeywordGroups('#f-steps');
+    } else if (type === 'upload') {
+      q.maxFiles = Number(document.getElementById('f-maxfiles').value) || 1;
     }
     return q;
   }
@@ -1203,7 +1368,7 @@
       return '<div class="q-item">' +
         '<span class="badge ' + q.type + '">' + label + '</span>' +
         '<span class="q-item-text">' + escapeHtml(q.question) + '</span>' +
-        '<span class="q-item-score">' + fullScore(q) + ' 分</span>' +
+        '<span class="q-item-score">' + (q.type === 'upload' ? '待批改' : (fullScore(q) + ' 分')) + '</span>' +
         '<span class="q-item-actions">' +
           '<button data-act="up" data-i="' + i + '" title="上移">↑</button>' +
           '<button data-act="down" data-i="' + i + '" title="下移">↓</button>' +
