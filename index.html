@@ -277,7 +277,7 @@
           <button class="btn danger btn-sm" id="btn-del-set">🗑 删除本套</button>
         </div>
         <div class="form-field" style="margin-top:14px">
-          <label>可作答的班级（不勾选 = 所有班级都可作答）</label>
+          <label>可作答的班级（勾选 = 该班级可作答；都不勾选 = 无班级可作答）</label>
           <div id="set-classes"></div>
         </div>
       </div>
@@ -502,6 +502,20 @@
       localStorage.setItem(DATA_KEY, JSON.stringify(d));
     }
   }
+  function migrateClassAccess() {
+    // 旧版语义是「不勾选 = 所有班级都可作答」，新版改为「勾选才能作答」。
+    // 一次性把旧数据里空的 classIds 迁移为“所有班级”，避免现有套题对学生突然不可见。
+    var d = DATA;
+    if (!d || d._classAccessMigrated) return false;
+    var allIds = (d.classes || []).map(function (c) { return c.id; });
+    var changed = false;
+    (d.sets || []).forEach(function (s) {
+      if (!Array.isArray(s.classIds) || s.classIds.length === 0) { s.classIds = allIds.slice(); changed = true; }
+    });
+    d._classAccessMigrated = true;
+    return changed;
+  }
+
   async function loadData() {
     var c = getSb();
     if (!c) {
@@ -509,20 +523,28 @@
         var raw = localStorage.getItem(DATA_KEY);
         if (raw) {
           var d = JSON.parse(raw);
-          if (d && Array.isArray(d.sets)) { if (!Array.isArray(d.classes)) d.classes = []; DATA = d; return; }
+          if (d && Array.isArray(d.sets)) {
+            if (!Array.isArray(d.classes)) d.classes = [];
+            DATA = d;
+            if (migrateClassAccess()) saveData(DATA);
+            return;
+          }
         }
       } catch (e) {}
       DATA = sampleData();
+      migrateClassAccess();
       return;
     }
     var r = await c.from('config').select('data').eq('id', 1).maybeSingle();
-    if (r.error) { console.error('读取配置失败', r.error); DATA = sampleData(); return; }
+    if (r.error) { console.error('读取配置失败', r.error); DATA = sampleData(); migrateClassAccess(); return; }
     if (r.data && r.data.data && Array.isArray(r.data.data.sets)) {
       var d2 = r.data.data;
       if (!Array.isArray(d2.classes)) d2.classes = [];
       DATA = d2;
+      if (migrateClassAccess()) saveData(DATA);
     } else {
       DATA = sampleData();
+      migrateClassAccess();
       await c.from('config').upsert({ id: 1, data: DATA });
     }
   }
@@ -783,11 +805,9 @@
     return (session && session.role === 'student' && session.student) ? session.student.classId : null;
   }
   function getSetsForStudent(classId) {
-    var sets = getSets();
-    if (!classId) return sets;
-    return sets.filter(function (s) {
+    return getSets().filter(function (s) {
       var ids = s.classIds || [];
-      return ids.length === 0 || ids.indexOf(classId) !== -1;
+      return ids.indexOf(classId) !== -1;
     });
   }
   function visibleSetsForCurrentUser() {
