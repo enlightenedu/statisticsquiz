@@ -332,7 +332,7 @@
         <div class="hint">
           全部数据 = 老师密码 + 所有套题。导出后可作为备份；导入会覆盖当前所有数据。<br>
           题目分类会自动按「一、单选 二、多选 三、简答 四、计算 五、分析 六、上传」排序展示，无需手动排序。<br>
-          「上传题」用于学生提交作业文件（图片 / Word / PDF 等），提交后老师可在「成绩汇总」中点击「📎下载」批改。
+          「上传题」用于学生提交作业文件（图片 / Word / PDF 等），老师可在「成绩汇总」中下载文件并直接打分。
         </div>
       </div>
     </section>
@@ -629,7 +629,6 @@
   }
 
   function fullScore(q) {
-    if (q.type === 'upload') return 0; // 上传题由老师线下批改，不计入自动判分
     if (q.type === 'calc') {
       var a = (q.answerScore !== undefined) ? Number(q.answerScore) : (Number(q.score) || 0);
       var s = (q.stepsScore !== undefined) ? Number(q.stepsScore) : 0;
@@ -719,7 +718,7 @@
     if (q.type === 'upload') {
       var files = (ans && Array.isArray(ans.files)) ? ans.files : [];
       var names = files.map(function (f) { return f.name; }).join('、');
-      return { score: 0, full: 0, ok: false, status: 'pending',
+      return { score: 0, full: full, ok: false, status: 'pending',
         detail: files.length ? ('已上传 ' + files.length + ' 个文件，待老师批改') : '未上传文件',
         yourAnswer: files.length ? names : '未上传', files: files };
     }
@@ -736,14 +735,15 @@
   }
 
   function gradeAll(order, answers) {
-    var per = [], total = 0, fullTotal = 0;
+    var per = [], total = 0, fullTotal = 0, autoFull = 0;
     order.forEach(function (entry, i) {
       var r = gradeQuestion(entry.q, answers[i]);
       per.push({ type: entry.q.type, score: r.score, full: r.full, status: r.status, detail: r.detail, yourAnswer: r.yourAnswer, yourProcess: r.yourProcess, files: r.files, explanation: entry.q.explanation, question: entry.q.question });
       total += r.score; fullTotal += r.full;
+      if (entry.q.type !== 'upload') autoFull += r.full;
     });
     total = Math.round(total * 10) / 10;
-    return { per: per, total: total, fullTotal: fullTotal };
+    return { per: per, total: total, fullTotal: fullTotal, autoFull: autoFull };
   }
 
   /* ============ 会话 ============ */
@@ -902,7 +902,7 @@
       html += '<div class="q-head"><span class="q-num">' + num + '.</span>' +
         '<span class="badge ' + q.type + '">' + TYPE_META[q.type].label + '</span>' +
         '<span class="q-text">' + escapeHtml(q.question) + '</span>' +
-        '<span class="q-score">' + (q.type === 'upload' ? '待批改' : (fullScore(q) + ' 分')) + '</span></div>';
+        '<span class="q-score">' + (q.type === 'upload' ? (fullScore(q) + ' 分 · 待批改') : (fullScore(q) + ' 分')) + '</span></div>';
 
       if (q.type === 'single') {
         html += '<div class="options">' + q.options.map(function (opt, j) {
@@ -922,7 +922,7 @@
       } else if (q.type === 'upload') {
         html += '<div class="upload-box">' +
           '<input type="file" class="upload-input" data-q="' + entry.idx + '" multiple accept="' + UPLOAD_ACCEPT + '">' +
-          '<div class="mini-hint">可上传图片 / Word / PDF 等，最多 ' + (Math.max(1, Number(q.maxFiles) || 1)) + ' 个文件，单个不超过 ' + MAX_FILE_MB + 'MB。提交后老师可下载批改。</div>' +
+          '<div class="mini-hint">可上传图片 / Word / PDF 等，最多 ' + (Math.max(1, Number(q.maxFiles) || 1)) + ' 个文件，单个不超过 ' + MAX_FILE_MB + 'MB。提交后老师可在「成绩汇总」中下载并打分。</div>' +
           '<div class="upload-list" data-q="' + entry.idx + '"></div></div>';
       }
       html += '</div>';
@@ -1068,13 +1068,15 @@
 
   function renderResult(result, name, setName) {
     var el = document.getElementById('exam-result');
-    var pct = result.fullTotal > 0 ? result.total / result.fullTotal : 0;
+    var autoFull = result.autoFull || 0;
+    var hasUpload = result.per.some(function (p) { return p.type === 'upload'; });
+    var pct = autoFull > 0 ? result.total / autoFull : 0;
     var cls = pct >= 0.85 ? 'ok' : (pct >= 0.6 ? 'mid' : 'low');
     var html = '<div class="card score-hero">' +
       '<div class="sub">' + escapeHtml(name) + ' · ' + escapeHtml(setName) + '</div>';
-    if (result.fullTotal > 0) {
-      html += '<div class="big ' + cls + '">' + result.total + ' <span style="font-size:20px;color:var(--muted)">/ ' + result.fullTotal + '</span></div>' +
-        '<div class="sub">正确率 ' + Math.round(pct * 100) + '%</div>';
+    if (autoFull > 0) {
+      html += '<div class="big ' + cls + '">' + result.total + ' <span style="font-size:20px;color:var(--muted)">/ ' + autoFull + '</span></div>' +
+        '<div class="sub">正确率 ' + Math.round(pct * 100) + '%' + (hasUpload ? '（上传题待老师批改）' : '') + '</div>';
     } else {
       html += '<div class="big" style="font-size:26px">📤 已提交</div>' +
         '<div class="sub">文件已上传，待老师批改</div>';
@@ -1085,7 +1087,7 @@
       var icon = p.status === 'right' ? '<span class="icon-ok">✔</span>' : (p.status === 'partial' ? '<span class="icon-half">◐</span>' : (p.status === 'pending' ? '<span class="icon-half">📎</span>' : '<span class="icon-no">✘</span>'));
       html += '<div class="result-item ' + p.status + '">' +
         '<div class="ri-head">' + icon + ' ' + (i + 1) + '. <span class="badge ' + p.type + '">' + TYPE_META[p.type].label + '</span>' +
-        '<span class="ri-score">' + p.score + ' / ' + p.full + ' 分</span></div>' +
+        '<span class="ri-score">' + (p.status === 'pending' ? '待批改' : (p.score + ' / ' + p.full + ' 分')) + '</span></div>' +
         '<div class="ri-q">' + escapeHtml(p.question) + '</div>' +
         '<div class="ri-your">你的答案：' + escapeHtml(p.yourAnswer) + '</div>' +
         (p.yourProcess ? '<div class="ri-your">你的过程：' + escapeHtml(p.yourProcess) + '</div>' : '') +
@@ -1110,6 +1112,7 @@
     if (!set) { statsEl.innerHTML = ''; tableEl.innerHTML = '<div class="empty">暂无套题。</div>'; return; }
 
     var subs = await listSubs(set.id);
+    summarySubs = subs;
     var order = orderedQuestions(set);
     var qCount = order.length;
 
@@ -1137,9 +1140,13 @@
         var p = s.perQuestion && s.perQuestion[j];
         if (order[j].q.type === 'upload') {
           var fl = (p && p.files) ? p.files : [];
-          cells += '<td>' + (fl.length
+          var fullU = p ? (Number(p.full) || 0) : 0;
+          var links = fl.length
             ? fl.map(function (f) { return '<a class="file-link" href="' + escapeAttr(f.url) + '" target="_blank" rel="noopener" title="' + escapeAttr(f.name) + '">📎下载</a>'; }).join('<br>')
-            : '<span style="color:var(--muted)">未传</span>') + '</td>';
+            : '<span style="color:var(--muted)">未传</span>';
+          cells += '<td>' + links + (fl.length
+            ? '<div style="margin-top:6px"><input type="number" class="grade-input" data-subid="' + s.id + '" data-q="' + j + '" min="0" max="' + fullU + '" step="0.5" value="' + (p ? p.score : '') + '" placeholder="打分" style="width:76px;padding:4px 8px;font-size:13px"> / ' + fullU + '</div>'
+            : '') + '</td>';
         } else {
           cells += '<td>' + (p ? (p.score + '/' + p.full) : '') + '</td>';
         }
@@ -1156,6 +1163,37 @@
         renderSummary();
       });
     });
+
+    tableEl.querySelectorAll('.grade-input').forEach(function (inp) {
+      inp.addEventListener('change', function () {
+        setUploadGrade(inp.getAttribute('data-subid'), Number(inp.getAttribute('data-q')), inp.value);
+      });
+    });
+  }
+
+  var summarySubs = [];
+  async function setUploadGrade(subId, qIndex, val) {
+    var set = getActiveSet();
+    if (!set) return;
+    var sub = summarySubs.filter(function (s) { return String(s.id) === String(subId); })[0];
+    if (!sub || !sub.perQuestion || !sub.perQuestion[qIndex]) return;
+    var p = sub.perQuestion[qIndex];
+    var full = Number(p.full) || 0;
+    var v = Math.round(Math.max(0, Math.min(Number(val) || 0, full)) * 10) / 10;
+    p.score = v;
+    p.status = (full > 0 && v >= full) ? 'right' : (v > 0 ? 'partial' : 'pending');
+    var total = 0;
+    sub.perQuestion.forEach(function (x) { total += Number(x.score) || 0; });
+    sub.score = Math.round(total * 10) / 10;
+
+    var c = getSb();
+    if (c) {
+      var r = await c.from('submissions').update({ per_question: sub.perQuestion, score: sub.score }).eq('id', sub.id);
+      if (r.error) { console.error('保存分数失败', r.error); alert('保存分数失败：' + r.error.message); return; }
+    } else {
+      localSetSubs(set.id, summarySubs);
+    }
+    renderSummary();
   }
 
   function round1(n) { return Math.round(n * 10) / 10; }
@@ -1183,12 +1221,7 @@
       var row = [idx + 1, csvCell(s.name), csvCell(s.sid || ''), s.score, s.total];
       for (var j = 0; j < qCount; j++) {
         var p = s.perQuestion && s.perQuestion[j];
-        if (order[j].q.type === 'upload') {
-          var fl = (p && p.files) ? p.files : [];
-          row.push(fl.length ? fl.map(function (f) { return f.name + ' ' + f.url; }).join('；') : '未上传');
-        } else {
-          row.push(p ? p.score : '');
-        }
+        row.push(p ? p.score : '');
       }
       row.push(fmtTime(s.time));
       lines.push(row.join(','));
@@ -1289,7 +1322,7 @@
       div.innerHTML =
         '<div class="form-field"><label>最多上传文件数</label>' +
         '<input type="number" id="f-maxfiles" min="1" max="20" value="' + escapeAttr(uq.maxFiles !== undefined ? uq.maxFiles : 1) + '"></div>' +
-        '<div class="mini-hint">支持图片、Word、PDF、Excel、PPT、压缩包等；单个文件不超过 ' + MAX_FILE_MB + 'MB。文件上传后，老师可在「成绩汇总」中下载批改。</div>';
+        '<div class="mini-hint">支持图片、Word、PDF、Excel、PPT、压缩包等；单个文件不超过 ' + MAX_FILE_MB + 'MB。学生提交后，老师可在「成绩汇总」中下载并打分。</div>';
       el.appendChild(div);
     }
   }
@@ -1358,6 +1391,7 @@
       if (q.type === 'multi' && (!q.answer || q.answer.length === 0)) { alert('请勾选至少一个正确答案'); return; }
     }
     if (q.type === 'calc' && isNaN(q.answer)) { alert('请填写计算题的正确答案（数值）'); return; }
+    if (q.type === 'upload' && !(Number(q.score) > 0)) { alert('请为上传题设置分值（满分，如 100）'); return; }
 
     var d = getData();
     var set = getActiveSet();
@@ -1388,7 +1422,7 @@
       return '<div class="q-item">' +
         '<span class="badge ' + q.type + '">' + label + '</span>' +
         '<span class="q-item-text">' + escapeHtml(q.question) + '</span>' +
-        '<span class="q-item-score">' + (q.type === 'upload' ? '待批改' : (fullScore(q) + ' 分')) + '</span>' +
+        '<span class="q-item-score">' + (q.type === 'upload' ? (fullScore(q) + ' 分 · 待批改') : (fullScore(q) + ' 分')) + '</span>' +
         '<span class="q-item-actions">' +
           '<button data-act="up" data-i="' + i + '" title="上移">↑</button>' +
           '<button data-act="down" data-i="' + i + '" title="下移">↓</button>' +
